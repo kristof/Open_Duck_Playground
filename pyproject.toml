@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "framesviewer>=1.0.2",
     "jax[cuda12]>=0.5.0",
-    "jaxlib>=0.5.0",
+#    "jaxlib>=0.5.0",
     "jaxtyping>=0.2.38",
     "matplotlib>=3.10.0",
     "mediapy>=1.2.2",
