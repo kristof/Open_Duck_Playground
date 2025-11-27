@@ -39,7 +39,13 @@ from playground.common.rewards import (
     cost_stand_still,
     reward_alive,
 )
-from playground.open_duck_mini_v2.custom_rewards import reward_imitation
+from playground.open_duck_mini_v2.custom_rewards import (
+    reward_imitation,
+    reward_gait_phase,
+    reward_foot_clearance,
+    reward_feet_air_time,
+    cost_swing_velocity,
+)
 
 # if set to false, won't require the reference data to be present and won't compute the reference motions polynoms for nothing
 USE_IMITATION_REWARD = True
@@ -80,11 +86,23 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
                 action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
                 alive=20.0,
                 imitation=1.0,
+                # Gait timing rewards
+                gait_phase=1.0,  # reward for alternating contact pattern
+                foot_clearance=0.5,  # reward for proper swing height
+                feet_air_time=0.5,  # reward for proper swing duration
+                swing_velocity=-0.1,  # cost for excessive foot velocity
             ),
             tracking_sigma=0.01,  # was working at 0.01
+        ),
+        # Gait timing parameters
+        gait_config=config_dict.create(
+            frequency=2.0,  # target gait frequency in Hz (steps per second)
+            duty_cycle=0.5,  # fraction of cycle in stance (0.5 = walk, 0.3 = run)
+            target_clearance=0.02,  # target foot height during swing (meters)
+            target_air_time=0.2,  # target swing duration (seconds)
         ),
         push_config=config_dict.create(
             enable=True,
@@ -299,6 +317,9 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             "imitation_i": 0,
             "current_reference_motion": current_reference_motion,
             "imitation_phase": jp.zeros(2),
+            # Gait timing related
+            "gait_phase": 0.0,  # Current phase in gait cycle [0, 1]
+            "contact_changes": 0,  # Count of contact state changes
         }
 
         metrics = {}
@@ -433,6 +454,14 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         p_f = data.site_xpos[self._feet_site_id]
         p_fz = p_f[..., -1]
         state.info["swing_peak"] = jp.maximum(state.info["swing_peak"], p_fz)
+        
+        # Update gait phase based on target frequency
+        gait_period = 1.0 / self._config.gait_config.frequency
+        state.info["gait_phase"] = (state.info["gait_phase"] + self.dt / gait_period) % 1.0
+        
+        # Track contact changes (for frequency reward)
+        contact_changed = jp.sum(contact != state.info["last_contact"])
+        state.info["contact_changes"] += contact_changed
 
         obs = self._get_obs(data, state.info, contact)
         done = self._get_termination(data)
@@ -631,6 +660,12 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
     ) -> dict[str, jax.Array]:
         del metrics  # Unused.
 
+        # Get foot positions and velocities for gait rewards
+        foot_pos = data.site_xpos[self._feet_site_id]
+        foot_heights = foot_pos[..., -1]  # z-coordinates
+        foot_vel = data.sensordata[self._foot_linvel_sensor_adr]
+        foot_vel_magnitude = jp.linalg.norm(foot_vel, axis=-1)
+
         ret = {
             "tracking_lin_vel": reward_tracking_lin_vel(
                 info["command"],
@@ -663,6 +698,31 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_actuator_joints_qvel(data.qvel),
                 self._default_actuator,
                 ignore_head=False,
+            ),
+            # Gait timing rewards
+            "gait_phase": reward_gait_phase(
+                info["gait_phase"],
+                contact,
+                info["command"],
+                self._config.gait_config.duty_cycle,
+            ),
+            "foot_clearance": reward_foot_clearance(
+                foot_heights,
+                info["gait_phase"],
+                info["command"],
+                self._config.gait_config.target_clearance,
+                self._config.gait_config.duty_cycle,
+            ),
+            "feet_air_time": reward_feet_air_time(
+                info["feet_air_time"],
+                first_contact,
+                info["command"],
+                self._config.gait_config.target_air_time,
+            ),
+            "swing_velocity": cost_swing_velocity(
+                foot_vel_magnitude,
+                contact,
+                info["command"],
             ),
         }
 
