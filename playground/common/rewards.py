@@ -79,6 +79,29 @@ def cost_action_rate(act: jax.Array, last_act: jax.Array) -> jax.Array:
     return c1
 
 
+def cost_action_acceleration(
+    act: jax.Array, last_act: jax.Array, last_last_act: jax.Array
+) -> jax.Array:
+    """
+    Cost for action acceleration (second derivative).
+    
+    Penalizes changes in the rate of change of actions, promoting smooth
+    and elegant motion without sudden accelerations or decelerations.
+    
+    Args:
+        act: Current action
+        last_act: Previous action
+        last_last_act: Action before previous
+    
+    Returns:
+        Cost value (higher = more jerky motion)
+    """
+    # Acceleration = (act - last_act) - (last_act - last_last_act)
+    #              = act - 2*last_act + last_last_act
+    acceleration = act - 2 * last_act + last_last_act
+    return jp.nan_to_num(jp.sum(jp.square(acceleration)))
+
+
 # Other rewards.
 
 

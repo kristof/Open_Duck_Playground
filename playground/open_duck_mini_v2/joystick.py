@@ -36,6 +36,7 @@ from playground.common.rewards import (
     reward_tracking_ang_vel,
     cost_torques,
     cost_action_rate,
+    cost_action_acceleration,
     cost_stand_still,
     cost_feet_slip,
     reward_alive,
@@ -83,22 +84,30 @@ def default_config() -> config_dict.ConfigDict:
         ),
         reward_config=config_dict.create(
             scales=config_dict.create(
-                tracking_lin_vel=2.5,
-                tracking_ang_vel=6.0,
-                torques=-1.0e-3,
-                action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
-                alive=5.0,  # Reduced from 20.0 - was dominating other rewards
-                imitation=5.0,  # Increased from 1.0 - now outputs [0,6] so scale up
-                # Gait timing rewards
-                gait_phase=1.0,  # reward for alternating contact pattern
-                foot_clearance=0.5,  # reward for proper swing height
-                feet_air_time=0.5,  # reward for proper swing duration
-                swing_velocity=-0.1,  # cost for excessive foot velocity
-                # Feet contact quality
-                feet_slip=-0.5,  # cost for foot sliding while in contact
+                # === PRIMARY: Velocity tracking (what matters most) ===
+                tracking_lin_vel=4.0,   # Higher - forward walking is top priority
+                tracking_ang_vel=3.0,   # Good turning, but not at expense of forward motion
+                
+                # === ELEGANCE: Smooth, natural motion ===
+                imitation=6.0,          # High - drives natural gait from reference motion
+                action_rate=-0.8,       # Penalize jerky actions for smoothness
+                action_acceleration=-0.3,  # Penalize acceleration changes for elegance
+                
+                # === STABILITY: Stay alive and balanced ===
+                alive=2.0,              # Low - don't reward just standing
+                stand_still=-0.1,       # Light penalty for not moving when commanded
+                torques=-1.0e-3,        # Energy efficiency
+                
+                # === GAIT QUALITY: Natural walking pattern ===
+                gait_phase=0.5,         # Encourage alternating feet
+                foot_clearance=0.3,     # Lift feet properly during swing
+                feet_air_time=0.3,      # Proper swing duration
+                swing_velocity=-0.05,   # Don't swing feet too fast
+                
+                # === GROUND CONTACT: No skating ===
+                feet_slip=-0.3,         # Penalize foot sliding
             ),
-            tracking_sigma=0.01,  # was working at 0.01
+            tracking_sigma=0.01,
         ),
         # Gait timing parameters
         gait_config=config_dict.create(
@@ -683,6 +692,9 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             # "orientation": cost_orientation(self.get_gravity(data)),
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
+            "action_acceleration": cost_action_acceleration(
+                action, info["last_act"], info["last_last_act"]
+            ),
             "alive": reward_alive(),
             "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
                 self.get_floating_base_qpos(data.qpos),  # floating base qpos
