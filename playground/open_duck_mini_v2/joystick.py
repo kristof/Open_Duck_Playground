@@ -37,6 +37,7 @@ from playground.common.rewards import (
     cost_torques,
     cost_action_rate,
     cost_stand_still,
+    cost_feet_slip,
     reward_alive,
 )
 from playground.open_duck_mini_v2.custom_rewards import (
@@ -94,6 +95,8 @@ def default_config() -> config_dict.ConfigDict:
                 foot_clearance=0.5,  # reward for proper swing height
                 feet_air_time=0.5,  # reward for proper swing duration
                 swing_velocity=-0.1,  # cost for excessive foot velocity
+                # Feet contact quality
+                feet_slip=-0.5,  # cost for foot sliding while in contact
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -723,6 +726,11 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 foot_vel_magnitude,
                 contact,
                 info["command"],
+            ),
+            # Feet contact quality
+            "feet_slip": cost_feet_slip(
+                foot_vel,  # [n_feet, 3] - full velocity vectors
+                contact,
             ),
         }
 

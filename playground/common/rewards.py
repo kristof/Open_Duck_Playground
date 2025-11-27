@@ -176,11 +176,40 @@ def cost_pose(
 # Feet related rewards.
 
 
-# FIXME
-def cost_feet_slip(contact: jax.Array, global_linvel: jax.Array) -> jax.Array:
-    body_vel = global_linvel[:2]
-    reward = jp.sum(jp.linalg.norm(body_vel, axis=-1) * contact)
-    return jp.nan_to_num(reward)
+def cost_feet_slip(
+    foot_velocities: jax.Array,
+    contact: jax.Array,
+) -> jax.Array:
+    """
+    Cost for foot slipping while in contact with the ground.
+    
+    Penalizes horizontal foot velocity when the foot is supposed to be planted.
+    This encourages proper lift-swing-place gait patterns and improves
+    sim-to-real transfer since real feet can't slide freely.
+    
+    Args:
+        foot_velocities: XY velocity of each foot [n_feet, 2] or [n_feet, 3]
+        contact: Binary contact array per foot [n_feet]
+    
+    Returns:
+        Cost value (higher = more slip)
+    """
+    # Use only XY components if 3D velocities provided
+    if foot_velocities.shape[-1] == 3:
+        vel_xy = foot_velocities[..., :2]
+    else:
+        vel_xy = foot_velocities
+    
+    # Compute velocity magnitude per foot
+    vel_norm = jp.linalg.norm(vel_xy, axis=-1)
+    
+    # Only penalize velocity when foot is in contact
+    slip_per_foot = vel_norm * contact
+    
+    # Sum slip across all feet
+    total_slip = jp.sum(slip_per_foot)
+    
+    return jp.nan_to_num(total_slip)
 
 
 # FIXME
