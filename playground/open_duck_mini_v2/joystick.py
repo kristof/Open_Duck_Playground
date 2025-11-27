@@ -88,8 +88,8 @@ def default_config() -> config_dict.ConfigDict:
                 torques=-1.0e-3,
                 action_rate=-0.5,  # was -1.5
                 stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
-                alive=20.0,
-                imitation=1.0,
+                alive=5.0,  # Reduced from 20.0 - was dominating other rewards
+                imitation=5.0,  # Increased from 1.0 - now outputs [0,6] so scale up
                 # Gait timing rewards
                 gait_phase=1.0,  # reward for alternating contact pattern
                 foot_clearance=0.5,  # reward for proper swing height
