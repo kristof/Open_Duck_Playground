@@ -36,6 +36,7 @@ from playground.common.rewards import (
     reward_tracking_ang_vel,
     cost_torques,
     cost_action_rate,
+    cost_action_acceleration,
     cost_stand_still,
     reward_alive,
 )
@@ -85,7 +86,8 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_lin_vel=2.5,
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
-                action_rate=-0.5,  # was -1.5
+                action_rate=-0.5,  # was -1.5, penalizes first derivative (velocity)
+                action_acceleration=-0.2,  # penalizes second derivative for smoother motion
                 stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
                 alive=20.0,
                 imitation=1.0,
@@ -680,6 +682,9 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             # "orientation": cost_orientation(self.get_gravity(data)),
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
+            "action_acceleration": cost_action_acceleration(
+                action, info["last_act"], info["last_last_act"]
+            ),
             "alive": reward_alive(),
             "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
                 self.get_floating_base_qpos(data.qpos),  # floating base qpos

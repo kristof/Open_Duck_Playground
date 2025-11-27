@@ -79,6 +79,33 @@ def cost_action_rate(act: jax.Array, last_act: jax.Array) -> jax.Array:
     return c1
 
 
+def cost_action_acceleration(
+    act: jax.Array,
+    last_act: jax.Array,
+    last_last_act: jax.Array,
+) -> jax.Array:
+    """
+    Cost for action acceleration (second derivative).
+    
+    Penalizes changes in the rate of change of actions, leading to
+    even smoother motions than first-order action rate penalty alone.
+    
+    Acceleration = act - 2*last_act + last_last_act
+    (discrete second derivative)
+    
+    Args:
+        act: Current action
+        last_act: Previous action (t-1)
+        last_last_act: Action from two steps ago (t-2)
+    
+    Returns:
+        Sum of squared accelerations
+    """
+    # Discrete second derivative: a(t) - 2*a(t-1) + a(t-2)
+    acceleration = act - 2.0 * last_act + last_last_act
+    return jp.nan_to_num(jp.sum(jp.square(acceleration)))
+
+
 # Other rewards.
 
 
