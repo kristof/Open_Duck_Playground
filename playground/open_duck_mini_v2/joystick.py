@@ -36,21 +36,12 @@ from playground.common.rewards import (
     reward_tracking_ang_vel,
     cost_torques,
     cost_action_rate,
-    cost_action_acceleration,
-    cost_stand_still,
     cost_feet_slip,
     cost_orientation,
-    cost_lin_vel_z,
-    cost_ang_vel_xy,
-    cost_base_height,
     reward_alive,
 )
 from playground.open_duck_mini_v2.custom_rewards import (
     reward_imitation,
-    reward_gait_phase,
-    reward_foot_clearance,
-    reward_feet_air_time,
-    cost_swing_velocity,
 )
 
 # if set to false, won't require the reference data to be present and won't compute the reference motions polynoms for nothing
@@ -88,42 +79,29 @@ def default_config() -> config_dict.ConfigDict:
         ),
         reward_config=config_dict.create(
             scales=config_dict.create(
-                # === PRIMARY: Velocity tracking (what matters most) ===
-                tracking_lin_vel=4.0,   # Higher - forward walking is top priority
-                tracking_ang_vel=3.0,   # Good turning, but not at expense of forward motion
+                # === SIMPLIFIED: 8 terms, trust imitation for gait quality ===
                 
-                # === ELEGANCE: Smooth, natural motion ===
-                imitation=6.0,          # High - drives natural gait from reference motion
-                action_rate=-0.8,       # Penalize jerky actions for smoothness
-                action_acceleration=-0.3,  # Penalize acceleration changes for elegance
+                # Core objectives
+                tracking_lin_vel=4.0,   # Forward walking
+                tracking_ang_vel=3.0,   # Turning
+                imitation=8.0,          # Let imitation drive natural gait
                 
-                # === STABILITY: Stay alive and balanced ===
-                alive=2.0,              # Low - don't reward just standing
-                stand_still=-0.1,       # Light penalty for not moving when commanded
+                # Essential stability
+                alive=2.0,
+                orientation=-1.0,       # Stay upright
+                
+                # Smoothness
+                action_rate=-1.0,       # No jerky actions
+                
+                # Physical realism
                 torques=-1.0e-3,        # Energy efficiency
-                orientation=-1.0,       # Stay upright (penalize tilt)
-                lin_vel_z=-0.5,         # No bouncing up/down
-                ang_vel_xy=-0.3,        # No wobbling (roll/pitch rate)
-                base_height=-0.5,       # Consistent walking height
-                
-                # === GAIT QUALITY: Natural walking pattern ===
-                gait_phase=0.5,         # Encourage alternating feet
-                foot_clearance=0.3,     # Lift feet properly during swing
-                feet_air_time=0.3,      # Proper swing duration
-                swing_velocity=-0.05,   # Don't swing feet too fast
-                
-                # === GROUND CONTACT: No skating ===
-                feet_slip=-0.3,         # Penalize foot sliding
+                feet_slip=-0.3,         # No skating
             ),
             tracking_sigma=0.01,
-            base_height_target=0.155,   # Target walking height in meters
         ),
-        # Gait timing parameters
+        # Minimal gait config (for phase tracking in observations)
         gait_config=config_dict.create(
-            frequency=2.0,  # target gait frequency in Hz (steps per second)
-            duty_cycle=0.5,  # fraction of cycle in stance (0.5 = walk, 0.3 = run)
-            target_clearance=0.02,  # target foot height during swing (meters)
-            target_air_time=0.2,  # target swing duration (seconds)
+            frequency=2.0,  # gait frequency in Hz
         ),
         push_config=config_dict.create(
             enable=True,
@@ -679,15 +657,13 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         first_contact: jax.Array,
         contact: jax.Array,
     ) -> dict[str, jax.Array]:
-        del metrics  # Unused.
+        del metrics, first_contact  # Unused in simplified version.
 
-        # Get foot positions and velocities for gait rewards
-        foot_pos = data.site_xpos[self._feet_site_id]
-        foot_heights = foot_pos[..., -1]  # z-coordinates
+        # Get foot velocities for slip cost
         foot_vel = data.sensordata[self._foot_linvel_sensor_adr]
-        foot_vel_magnitude = jp.linalg.norm(foot_vel, axis=-1)
 
-        ret = {
+        return {
+            # === SIMPLIFIED: 8 rewards ===
             "tracking_lin_vel": reward_tracking_lin_vel(
                 info["command"],
                 self.get_local_linvel(data),
@@ -698,22 +674,9 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_gyro(data),
                 self._config.reward_config.tracking_sigma,
             ),
-            # === STABILITY COSTS ===
-            "orientation": cost_orientation(self.get_gravity(data)),
-            "lin_vel_z": cost_lin_vel_z(self.get_local_linvel(data)),
-            "ang_vel_xy": cost_ang_vel_xy(self.get_gyro(data)),
-            "base_height": cost_base_height(
-                data.qpos[2], self._config.reward_config.base_height_target
-            ),
-            "torques": cost_torques(data.actuator_force),
-            "action_rate": cost_action_rate(action, info["last_act"]),
-            "action_acceleration": cost_action_acceleration(
-                action, info["last_act"], info["last_last_act"]
-            ),
-            "alive": reward_alive(),
-            "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
-                self.get_floating_base_qpos(data.qpos),  # floating base qpos
-                self.get_floating_base_qvel(data.qvel),  # floating base qvel
+            "imitation": reward_imitation(
+                self.get_floating_base_qpos(data.qpos),
+                self.get_floating_base_qvel(data.qvel),
                 self.get_actuator_joints_qpos(data.qpos),
                 self.get_actuator_joints_qvel(data.qvel),
                 contact,
@@ -721,47 +684,12 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 info["command"],
                 USE_IMITATION_REWARD,
             ),
-            "stand_still": cost_stand_still(
-                # info["command"], data.qpos[7:], data.qvel[6:], self._default_pose
-                info["command"],
-                self.get_actuator_joints_qpos(data.qpos),
-                self.get_actuator_joints_qvel(data.qvel),
-                self._default_actuator,
-                ignore_head=False,
-            ),
-            # Gait timing rewards
-            "gait_phase": reward_gait_phase(
-                info["gait_phase"],
-                contact,
-                info["command"],
-                self._config.gait_config.duty_cycle,
-            ),
-            "foot_clearance": reward_foot_clearance(
-                foot_heights,
-                info["gait_phase"],
-                info["command"],
-                self._config.gait_config.target_clearance,
-                self._config.gait_config.duty_cycle,
-            ),
-            "feet_air_time": reward_feet_air_time(
-                info["feet_air_time"],
-                first_contact,
-                info["command"],
-                self._config.gait_config.target_air_time,
-            ),
-            "swing_velocity": cost_swing_velocity(
-                foot_vel_magnitude,
-                contact,
-                info["command"],
-            ),
-            # Feet contact quality
-            "feet_slip": cost_feet_slip(
-                foot_vel,  # [n_feet, 3] - full velocity vectors
-                contact,
-            ),
+            "alive": reward_alive(),
+            "orientation": cost_orientation(self.get_gravity(data)),
+            "action_rate": cost_action_rate(action, info["last_act"]),
+            "torques": cost_torques(data.actuator_force),
+            "feet_slip": cost_feet_slip(foot_vel, contact),
         }
-
-        return ret
 
     def sample_command(self, rng: jax.Array) -> jax.Array:
         rng1, rng2, rng3, rng4, rng5, rng6, rng7, rng8 = jax.random.split(rng, 8)
