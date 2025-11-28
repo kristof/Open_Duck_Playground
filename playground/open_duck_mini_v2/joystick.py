@@ -646,7 +646,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
             "alive": reward_alive(),
-            "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
+            "imitation": reward_imitation(
                 self.get_floating_base_qpos(data.qpos),  # floating base qpos
                 self.get_floating_base_qvel(data.qvel),  # floating base qvel
                 self.get_actuator_joints_qpos(data.qpos),
@@ -654,6 +654,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 contact,
                 info["current_reference_motion"],
                 info["command"],
+                data.site_xpos[self._feet_site_id],  # foot positions for end-effector tracking
                 USE_IMITATION_REWARD,
             ),
             "stand_still": cost_stand_still(
