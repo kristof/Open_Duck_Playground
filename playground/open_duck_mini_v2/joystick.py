@@ -37,6 +37,8 @@ from playground.common.rewards import (
     cost_torques,
     cost_action_rate,
     cost_stand_still,
+    cost_orientation,
+    cost_ang_vel_xy,
     reward_alive,
 )
 from playground.open_duck_mini_v2.custom_rewards import reward_imitation
@@ -80,9 +82,11 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
                 action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.5,  # increased from -0.2 for better idle pose
                 alive=20.0,
                 imitation=1.0,
+                orientation=-1.0,  # penalize body tilt for upright idle
+                ang_vel_xy=-0.3,   # penalize tilting/rolling motion
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -642,7 +646,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_gyro(data),
                 self._config.reward_config.tracking_sigma,
             ),
-            # "orientation": cost_orientation(self.get_gravity(data)),
+            "orientation": cost_orientation(self.get_gravity(data)),
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
             "alive": reward_alive(),
@@ -665,6 +669,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self._default_actuator,
                 ignore_head=False,
             ),
+            "ang_vel_xy": cost_ang_vel_xy(self.get_global_angvel(data)),
         }
 
         return ret

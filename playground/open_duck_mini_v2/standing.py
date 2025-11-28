@@ -34,6 +34,7 @@ from playground.common.rewards import (
     cost_torques,
     cost_action_rate,
     cost_stand_still,
+    cost_ang_vel_xy,
     reward_alive,
     cost_head_pos,
 )
@@ -74,13 +75,14 @@ def default_config() -> config_dict.ConfigDict:
             scales=config_dict.create(
                 # tracking_lin_vel=2.5,
                 # tracking_ang_vel=4.0,
-                orientation=-0.5,
+                orientation=-1.5,  # increased from -0.5 to help robot stay upright
                 torques=-1.0e-3,
                 action_rate=-0.375,  # was -1.5
-                stand_still=-0.3,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.5,  # increased from -0.3 to better maintain default pose
                 alive=20.0,
                 # imitation=1.0,
                 head_pos=-2.0,
+                ang_vel_xy=-0.3,  # penalize tilting/rolling motion
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -600,6 +602,7 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_actuator_joints_qvel(data.qvel),
                 info["command"],
             ),
+            "ang_vel_xy": cost_ang_vel_xy(self.get_global_angvel(data)),
         }
 
         return ret
