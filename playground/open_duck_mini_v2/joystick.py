@@ -53,7 +53,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         action_scale=0.25,
-        dof_vel_scale=0.15,
+        dof_vel_scale=0.05,
         history_len=0,
         soft_joint_pos_limit_factor=0.95,
         max_motor_velocity=5.24,  # rad/s
@@ -85,6 +85,10 @@ def default_config() -> config_dict.ConfigDict:
                 imitation=1.0,
             ),
             tracking_sigma=0.01,  # was working at 0.01
+        ),
+        # Gait config for phase tracking (Disney-style)
+        gait_config=config_dict.create(
+            frequency=2.0,  # gait frequency in Hz (steps per second)
         ),
         push_config=config_dict.create(
             enable=True,
@@ -299,6 +303,8 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             "imitation_i": 0,
             "current_reference_motion": current_reference_motion,
             "imitation_phase": jp.zeros(2),
+            # Gait phase for Disney-style phase tracking [0, 1]
+            "gait_phase": 0.0,
         }
 
         metrics = {}
@@ -341,6 +347,9 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                     ),
                 ]
             )
+            # Update gait phase for Disney-style phase tracking
+            gait_period = 1.0 / self._config.gait_config.frequency
+            state.info["gait_phase"] = (state.info["gait_phase"] + self.dt / gait_period) % 1.0
         else:
             state.info["imitation_i"] = 0
 
@@ -646,15 +655,17 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
             "alive": reward_alive(),
-            "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
-                self.get_floating_base_qpos(data.qpos),  # floating base qpos
-                self.get_floating_base_qvel(data.qvel),  # floating base qvel
+            "imitation": reward_imitation(
+                self.get_floating_base_qpos(data.qpos),
+                self.get_floating_base_qvel(data.qvel),
                 self.get_actuator_joints_qpos(data.qpos),
                 self.get_actuator_joints_qvel(data.qvel),
                 contact,
                 info["current_reference_motion"],
                 info["command"],
                 USE_IMITATION_REWARD,
+                gait_phase=info["gait_phase"],
+                ref_phase=info["imitation_i"] / self.PRM.nb_steps_in_period,
             ),
             "stand_still": cost_stand_still(
                 # info["command"], data.qpos[7:], data.qvel[6:], self._default_pose

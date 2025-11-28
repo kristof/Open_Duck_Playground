@@ -50,7 +50,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         action_scale=0.25,
-        dof_vel_scale=0.15,
+        dof_vel_scale=0.05,
         history_len=0,
         soft_joint_pos_limit_factor=0.95,
         noise_config=config_dict.create(
