@@ -3,6 +3,49 @@
 import numpy as np
 
 
+def reward_idle_wiggle(
+    joint_vel,
+    cmd,
+    time,
+    wiggle_freq=0.5,
+    wiggle_amplitude=0.3,
+):
+    """
+    Reward for periodic movement when standing still (idle animation/waddle).
+    NumPy version for inference.
+    
+    Args:
+        joint_vel: Joint velocities
+        cmd: Command array [vx, vy, vyaw, ...]
+        time: Current simulation time
+        wiggle_freq: Frequency of desired wiggle (Hz)
+        wiggle_amplitude: Target velocity amplitude for wiggle
+    
+    Returns:
+        Reward value in [0, 1]
+    """
+    cmd_norm = np.linalg.norm(cmd[:3])
+    
+    # Only reward wiggle when command is near zero (standing idle)
+    is_idle = cmd_norm < 0.01
+    
+    # Target: periodic joint movement following a sine wave
+    target_vel_magnitude = wiggle_amplitude * np.abs(np.sin(2 * np.pi * wiggle_freq * time))
+    
+    # Actual velocity magnitude
+    actual_vel_magnitude = np.mean(np.abs(joint_vel))
+    
+    # Reward being close to target wiggle velocity
+    vel_error = np.abs(actual_vel_magnitude - target_vel_magnitude)
+    reward = np.exp(-10.0 * vel_error)
+    
+    # Only apply when idle
+    if not is_idle:
+        reward = 0.0
+    
+    return np.nan_to_num(reward)
+
+
 def reward_imitation(
     base_qpos,
     base_qvel,

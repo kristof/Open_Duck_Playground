@@ -1,6 +1,52 @@
 import jax
 import jax.numpy as jp
 
+
+def reward_idle_wiggle(
+    joint_vel: jax.Array,
+    cmd: jax.Array,
+    time: float,
+    wiggle_freq: float = 0.5,
+    wiggle_amplitude: float = 0.3,
+) -> jax.Array:
+    """
+    Reward for periodic movement when standing still (idle animation/waddle).
+    
+    Encourages the robot to have small periodic motions when not commanded
+    to move, making it appear more "alive" and character-like.
+    
+    Args:
+        joint_vel: Joint velocities
+        cmd: Command array [vx, vy, vyaw, ...]
+        time: Current simulation time
+        wiggle_freq: Frequency of desired wiggle (Hz)
+        wiggle_amplitude: Target velocity amplitude for wiggle
+    
+    Returns:
+        Reward value in [0, 1]
+    """
+    cmd_norm = jp.linalg.norm(cmd[:3])
+    
+    # Only reward wiggle when command is near zero (standing idle)
+    is_idle = cmd_norm < 0.01
+    
+    # Target: periodic joint movement following a sine wave
+    # We want some joints to have non-zero velocity in a rhythmic pattern
+    target_vel_magnitude = wiggle_amplitude * jp.abs(jp.sin(2 * jp.pi * wiggle_freq * time))
+    
+    # Actual velocity magnitude (use hip/knee joints for body sway)
+    actual_vel_magnitude = jp.mean(jp.abs(joint_vel))
+    
+    # Reward being close to target wiggle velocity
+    vel_error = jp.abs(actual_vel_magnitude - target_vel_magnitude)
+    reward = jp.exp(-10.0 * vel_error)
+    
+    # Only apply when idle
+    reward = jp.where(is_idle, reward, 0.0)
+    
+    return jp.nan_to_num(reward)
+
+
 def reward_imitation(
     base_qpos: jax.Array,
     base_qvel: jax.Array,
