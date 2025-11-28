@@ -80,9 +80,10 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
                 action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
                 alive=20.0,
-                imitation=1.0,
+                # Disney-style imitation outputs [0,1], so scale up to match other rewards
+                imitation=15.0,  # was 1.0 (increased because new reward is bounded [0,1])
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
