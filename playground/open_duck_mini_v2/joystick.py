@@ -76,14 +76,20 @@ def default_config() -> config_dict.ConfigDict:
         ),
         reward_config=config_dict.create(
             scales=config_dict.create(
-                tracking_lin_vel=2.5,
-                tracking_ang_vel=6.0,
+                # Velocity tracking - PRIMARY GOAL
+                tracking_lin_vel=5.0,   # Increased - reward moving at commanded velocity
+                tracking_ang_vel=4.0,   # Reward turning
+                
+                # Imitation - Disney-style multiplicative [0,1] output
+                imitation=20.0,         # High - drives natural gait
+                
+                # Survival - keep low so robot must MOVE to get reward
+                alive=5.0,              # Reduced from 20.0 - don't reward just standing!
+                
+                # Penalties
                 torques=-1.0e-3,
-                action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
-                alive=20.0,
-                # Disney-style imitation outputs [0,1], so scale up to match other rewards
-                imitation=15.0,  # was 1.0 (increased because new reward is bounded [0,1])
+                action_rate=-0.5,
+                stand_still=-0.5,       # Increased penalty for not moving when commanded
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
