@@ -19,6 +19,7 @@ def reward_imitation(
 
     # TODO don't reward for moving when the command is zero.
     cmd_norm = jp.linalg.norm(cmd[:3])
+    cmd_y_abs = jp.abs(cmd[1])  # Lateral velocity command magnitude
 
     # Reward weights
     w_torso_pos = 1.0
@@ -27,7 +28,10 @@ def reward_imitation(
     w_lin_vel_z = 1.0
     w_ang_vel_xy = 0.5
     w_ang_vel_z = 0.5
-    w_joint_pos = 15.0
+    # Reduce joint position weight when strafing - reference motions may not match strafing well
+    # Full weight (15.0) for forward/backward, reduced (5.0) when strafing
+    is_strafing = cmd_y_abs > 0.05
+    w_joint_pos = jp.where(is_strafing, 5.0, 15.0)
     w_joint_vel = 1.0e-3
     w_contact = 1.0
     w_end_effector = 2.0  # End-effector position tracking weight

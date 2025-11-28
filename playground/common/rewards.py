@@ -13,9 +13,12 @@ def reward_tracking_lin_vel(
     local_vel: jax.Array,
     tracking_sigma: float,
 ) -> jax.Array:
-    # lin_vel_error = jp.sum(jp.square(commands[:2] - local_vel[:2]))
-    # return jp.nan_to_num(jp.exp(-lin_vel_error / self._config.reward_config.tracking_sigma))
-    y_tol = 0.1
+    # Track both x and y velocities with equal precision
+    # Use tighter tolerance when actively strafing (cmd_y != 0)
+    cmd_y_abs = jp.abs(commands[1])
+    # Dynamic tolerance: 0.02 when strafing, 0.1 when not (allows natural sway during forward walk)
+    y_tol = jp.where(cmd_y_abs > 0.05, 0.02, 0.1)
+    
     error_x = jp.square(commands[0] - local_vel[0])
     error_y = jp.clip(jp.abs(local_vel[1] - commands[1]) - y_tol, 0.0, None)
     lin_vel_error = error_x + jp.square(error_y)
