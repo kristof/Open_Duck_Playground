@@ -39,6 +39,10 @@ from playground.common.rewards import (
     cost_action_acceleration,
     cost_stand_still,
     cost_feet_slip,
+    cost_orientation,
+    cost_lin_vel_z,
+    cost_ang_vel_xy,
+    cost_base_height,
     reward_alive,
 )
 from playground.open_duck_mini_v2.custom_rewards import (
@@ -97,6 +101,10 @@ def default_config() -> config_dict.ConfigDict:
                 alive=2.0,              # Low - don't reward just standing
                 stand_still=-0.1,       # Light penalty for not moving when commanded
                 torques=-1.0e-3,        # Energy efficiency
+                orientation=-1.0,       # Stay upright (penalize tilt)
+                lin_vel_z=-0.5,         # No bouncing up/down
+                ang_vel_xy=-0.3,        # No wobbling (roll/pitch rate)
+                base_height=-0.5,       # Consistent walking height
                 
                 # === GAIT QUALITY: Natural walking pattern ===
                 gait_phase=0.5,         # Encourage alternating feet
@@ -108,6 +116,7 @@ def default_config() -> config_dict.ConfigDict:
                 feet_slip=-0.3,         # Penalize foot sliding
             ),
             tracking_sigma=0.01,
+            base_height_target=0.155,   # Target walking height in meters
         ),
         # Gait timing parameters
         gait_config=config_dict.create(
@@ -689,7 +698,13 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_gyro(data),
                 self._config.reward_config.tracking_sigma,
             ),
-            # "orientation": cost_orientation(self.get_gravity(data)),
+            # === STABILITY COSTS ===
+            "orientation": cost_orientation(self.get_gravity(data)),
+            "lin_vel_z": cost_lin_vel_z(self.get_local_linvel(data)),
+            "ang_vel_xy": cost_ang_vel_xy(self.get_gyro(data)),
+            "base_height": cost_base_height(
+                data.qpos[2], self._config.reward_config.base_height_target
+            ),
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
             "action_acceleration": cost_action_acceleration(
