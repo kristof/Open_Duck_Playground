@@ -37,6 +37,7 @@ from playground.common.rewards import (
     reward_alive,
     cost_head_pos,
 )
+from playground.open_duck_mini_v2.custom_rewards import reward_idle_wiggle
 
 # if set to false, won't require the reference data to be present and won't compute the reference motions polynoms for nothing
 USE_IMITATION_REWARD = False
@@ -50,7 +51,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         action_scale=0.25,
-        dof_vel_scale=0.15,
+        dof_vel_scale=0.05,
         history_len=0,
         soft_joint_pos_limit_factor=0.95,
         noise_config=config_dict.create(
@@ -77,10 +78,12 @@ def default_config() -> config_dict.ConfigDict:
                 orientation=-0.5,
                 torques=-1.0e-3,
                 action_rate=-0.375,  # was -1.5
-                stand_still=-0.3,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.3,  # was -1.0 TODO try to relax this a bit ?
                 alive=20.0,
                 # imitation=1.0,
                 head_pos=-2.0,
+                # Idle animation - waddle when standing
+                idle_wiggle=3.0,  # Reward periodic movement for liveliness
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -599,6 +602,12 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_actuator_joints_qpos(data.qpos),
                 self.get_actuator_joints_qvel(data.qvel),
                 info["command"],
+            ),
+            # Idle animation - waddle for liveliness
+            "idle_wiggle": reward_idle_wiggle(
+                self.get_actuator_joints_qvel(data.qvel),
+                info["command"],
+                info["step"] * self.dt,  # Current time
             ),
         }
 
