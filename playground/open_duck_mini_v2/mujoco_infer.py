@@ -1,8 +1,7 @@
 import mujoco
+import mujoco.viewer
 import pickle
 import numpy as np
-import mujoco
-import mujoco.viewer
 import time
 import argparse
 from playground.common.onnx_infer import OnnxInfer
@@ -58,6 +57,9 @@ class MjInfer(MJInferBase):
         self.max_motor_velocity = 5.24  # rad/s
 
         self.phase_frequency_factor = 1.0
+
+        # Initialize motor_targets to prevent use before assignment
+        self.motor_targets = self.default_actuator.copy()
 
         print(f"joint names: {self.joint_names}")
         print(f"actuator names: {self.actuator_names}")
@@ -202,8 +204,9 @@ class MjInfer(MJInferBase):
                         self.saved_obs.append(obs)
                         action = self.policy.infer(obs)
 
-                        # self.action_filter.push(action)
-                        # action = self.action_filter.get_filtered_action()
+                        # Apply low-pass filter for smoother movements
+                        self.action_filter.push(action)
+                        action = self.action_filter.get_filtered_action()
 
                         self.last_last_last_action = self.last_last_action.copy()
                         self.last_last_action = self.last_action.copy()
@@ -226,8 +229,11 @@ class MjInfer(MJInferBase):
 
                             self.prev_motor_targets = self.motor_targets.copy()
 
-                        # head_targets = self.commands[3:]
-                        # self.motor_targets[5:9] = head_targets
+                        # Apply head commands directly only when in head control mode
+                        if self.head_control_mode:
+                            head_targets = self.commands[3:]
+                            self.motor_targets[5:9] = head_targets
+                        
                         self.data.ctrl = self.motor_targets.copy()
 
                     viewer.sync()
