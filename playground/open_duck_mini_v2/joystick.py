@@ -60,7 +60,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         action_scale=0.25,
-        dof_vel_scale=0.15,
+        dof_vel_scale=0.05,
         history_len=0,
         soft_joint_pos_limit_factor=0.95,
         max_motor_velocity=5.24,  # rad/s
@@ -86,8 +86,7 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_lin_vel=2.5,
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
-                action_rate=-0.5,  # was -1.5, penalizes first derivative (velocity)
-                action_acceleration=-0.2,  # penalizes second derivative for smoother motion
+                action_rate=-0.5,  # was -1.5
                 stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
                 alive=20.0,
                 imitation=1.0,
@@ -686,7 +685,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 action, info["last_act"], info["last_last_act"]
             ),
             "alive": reward_alive(),
-            "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
+            "imitation": reward_imitation(
                 self.get_floating_base_qpos(data.qpos),  # floating base qpos
                 self.get_floating_base_qvel(data.qvel),  # floating base qvel
                 self.get_actuator_joints_qpos(data.qpos),
@@ -694,6 +693,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 contact,
                 info["current_reference_motion"],
                 info["command"],
+                data.site_xpos[self._feet_site_id],  # foot positions for end-effector tracking
                 USE_IMITATION_REWARD,
             ),
             "stand_still": cost_stand_still(

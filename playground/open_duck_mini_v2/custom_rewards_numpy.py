@@ -1,5 +1,3 @@
-# import jax
-# import jax.numpy as np
 import numpy as np
 
 
@@ -209,7 +207,9 @@ def reward_imitation(
     contacts,
     reference_frame,
     cmd,
+    foot_pos,
     use_imitation_reward=False,
+    swing_height=0.02,
 ):
     if not use_imitation_reward:
         return np.nan_to_num(0.0)
@@ -217,6 +217,7 @@ def reward_imitation(
     # TODO don't reward for moving when the command is zero.
     cmd_norm = np.linalg.norm(cmd[:3])
 
+    # Reward weights
     w_torso_pos = 1.0
     w_torso_orientation = 1.0
     w_lin_vel_xy = 1.0
@@ -226,8 +227,9 @@ def reward_imitation(
     w_joint_pos = 15.0
     w_joint_vel = 1.0e-3
     w_contact = 1.0
+    w_end_effector = 2.0  # End-effector position tracking weight
 
-    #  TODO : double check if the slices are correct
+    # Reference frame slice indices
     linear_vel_slice_start = 34
     linear_vel_slice_end = 37
 
@@ -240,24 +242,13 @@ def reward_imitation(
     joint_vels_slice_start = 16
     joint_vels_slice_end = 32
 
-    # root_pos_slice_start = 0
-    # root_pos_slice_end = 3
-
     root_quat_slice_start = 3
     root_quat_slice_end = 7
-
-    # left_toe_pos_slice_start = 23
-    # left_toe_pos_slice_end = 26
-
-    # right_toe_pos_slice_start = 26
-    # right_toe_pos_slice_end = 29
 
     foot_contacts_slice_start = 32
     foot_contacts_slice_end = 34
 
-    # ref_base_pos = reference_frame[root_pos_slice_start:root_pos_slice_end]
-    # base_pos = qpos[:3]
-
+    # Extract reference values
     ref_base_orientation_quat = reference_frame[
         root_quat_slice_start:root_quat_slice_end
     ]
@@ -278,34 +269,33 @@ def reward_imitation(
     ref_joint_pos = reference_frame[joint_pos_slice_start:joint_pos_slice_end]
     # remove neck head and antennas
     ref_joint_pos = np.concatenate([ref_joint_pos[:5], ref_joint_pos[11:]])
-    # joint_pos = joints_qpos
     joint_pos = np.concatenate([joints_qpos[:5], joints_qpos[9:]])
 
     ref_joint_vels = reference_frame[joint_vels_slice_start:joint_vels_slice_end]
     # remove neck head and antennas
     ref_joint_vels = np.concatenate([ref_joint_vels[:5], ref_joint_vels[11:]])
-    # joint_vel = joints_qvel
     joint_vel = np.concatenate([joints_qvel[:5], joints_qvel[9:]])
-
-    # ref_left_toe_pos = reference_frame[left_toe_pos_slice_start:left_toe_pos_slice_end]
-    # ref_right_toe_pos = reference_frame[right_toe_pos_slice_start:right_toe_pos_slice_end]
 
     ref_foot_contacts = reference_frame[
         foot_contacts_slice_start:foot_contacts_slice_end
     ]
 
-    # reward
-    # torso_pos_rew = np.exp(-200.0 * np.sum(np.square(base_pos[:2] - ref_base_pos[:2]))) * w_torso_pos
+    # Binarize reference foot contacts
+    ref_foot_contacts_binary = np.where(
+        np.array(ref_foot_contacts) > 0.5,
+        np.ones_like(ref_foot_contacts),
+        np.zeros_like(ref_foot_contacts),
+    )
 
-    # real quaternion angle doesn't have the expected  effect, switching back for now
-    # torso_orientation_rew = np.exp(-20 * self.quaternion_angle(base_orientation, ref_base_orientation_quat)) * w_torso_orientation
+    # === Reward computations ===
 
-    # TODO ignore yaw here, we just want xy orientation
+    # Torso orientation reward (currently disabled in final sum)
     torso_orientation_rew = (
         np.exp(-20.0 * np.sum(np.square(base_orientation - ref_base_orientation_quat)))
         * w_torso_orientation
     )
 
+    # Linear velocity tracking
     lin_vel_xy_rew = (
         np.exp(-8.0 * np.sum(np.square(base_lin_vel[:2] - ref_base_lin_vel[:2])))
         * w_lin_vel_xy
@@ -315,6 +305,7 @@ def reward_imitation(
         * w_lin_vel_z
     )
 
+    # Angular velocity tracking
     ang_vel_xy_rew = (
         np.exp(-2.0 * np.sum(np.square(base_ang_vel[:2] - ref_base_ang_vel[:2])))
         * w_ang_vel_xy
@@ -324,16 +315,28 @@ def reward_imitation(
         * w_ang_vel_z
     )
 
+    # Joint position and velocity tracking
     joint_pos_rew = -np.sum(np.square(joint_pos - ref_joint_pos)) * w_joint_pos
     joint_vel_rew = -np.sum(np.square(joint_vel - ref_joint_vels)) * w_joint_vel
 
-    ref_foot_contacts = np.where(
-        np.array(ref_foot_contacts) > 0.5,
-        np.ones_like(ref_foot_contacts),
-        np.zeros_like(ref_foot_contacts),
-    )
-    contact_rew = np.sum(contacts == ref_foot_contacts) * w_contact
+    # Foot contact matching reward
+    contact_rew = np.sum(contacts == ref_foot_contacts_binary) * w_contact
 
+    # === End-effector (foot) position tracking ===
+    # Target foot height based on gait phase:
+    # - Swing phase (ref_contact = 0): target height = swing_height
+    # - Stance phase (ref_contact = 1): target height = 0 (on ground)
+    foot_z = foot_pos[..., -1]  # Get z-coordinates of feet [left_foot_z, right_foot_z]
+    target_foot_z = np.where(
+        ref_foot_contacts_binary < 0.5,
+        np.ones_like(ref_foot_contacts_binary) * swing_height,  # swing phase
+        np.zeros_like(ref_foot_contacts_binary),  # stance phase
+    )
+    # Exponential reward for foot height tracking
+    foot_height_error = np.sum(np.square(foot_z - target_foot_z))
+    end_effector_rew = np.exp(-40.0 * foot_height_error) * w_end_effector
+
+    # === Total reward ===
     reward = (
         lin_vel_xy_rew
         + lin_vel_z_rew
@@ -342,6 +345,7 @@ def reward_imitation(
         + joint_pos_rew
         + joint_vel_rew
         + contact_rew
+        + end_effector_rew
         # + torso_orientation_rew
     )
 

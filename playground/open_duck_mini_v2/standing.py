@@ -34,6 +34,7 @@ from playground.common.rewards import (
     cost_torques,
     cost_action_rate,
     cost_stand_still,
+    cost_ang_vel_xy,
     reward_alive,
     cost_head_pos,
 )
@@ -50,7 +51,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         action_scale=0.25,
-        dof_vel_scale=0.15,
+        dof_vel_scale=0.05,
         history_len=0,
         soft_joint_pos_limit_factor=0.95,
         noise_config=config_dict.create(
@@ -74,13 +75,14 @@ def default_config() -> config_dict.ConfigDict:
             scales=config_dict.create(
                 # tracking_lin_vel=2.5,
                 # tracking_ang_vel=4.0,
-                orientation=-0.5,
+                orientation=-1.5,  # increased from -0.5 to help robot stay upright
                 torques=-1.0e-3,
                 action_rate=-0.375,  # was -1.5
-                stand_still=-0.3,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.5,  # increased from -0.3 to better maintain default pose
                 alive=20.0,
                 # imitation=1.0,
                 head_pos=-2.0,
+                ang_vel_xy=-0.3,  # penalize tilting/rolling motion
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -523,6 +525,9 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         #     * self._config.noise_config.scales.linvel
         # )
 
+        # Compute imitation phase (same as joystick, but always 0 for standing)
+        imitation_phase = jp.array([1.0, 0.0])  # cos(0), sin(0) - standing still
+        
         state = jp.hstack(
             [
                 # noisy_linvel,  # 3
@@ -530,14 +535,15 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 # noisy_gravity,  # 3
                 noisy_gyro,  # 3
                 noisy_accelerometer,  # 3
-                info["command"],  # 3
+                info["command"],  # 7
                 noisy_joint_angles - self._default_actuator,  # 10
                 noisy_joint_vel * self._config.dof_vel_scale,  # 10
                 info["last_act"],  # 10
                 info["last_last_act"],  # 10
                 info["last_last_last_act"],  # 10
+                info["motor_targets"],  # 10 - match joystick format
                 contact,  # 2
-                info["current_reference_motion"],
+                imitation_phase,  # 2 - match joystick format
             ]
         )
 
@@ -561,7 +567,8 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 contact,  # 2
                 feet_vel,  # 4*3
                 info["feet_air_time"],  # 2
-                info["current_reference_motion"],
+                info["imitation_i"],  # match joystick format
+                imitation_phase,  # match joystick format
             ]
         )
 
@@ -600,6 +607,7 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self.get_actuator_joints_qvel(data.qvel),
                 info["command"],
             ),
+            "ang_vel_xy": cost_ang_vel_xy(self.get_global_angvel(data)),
         }
 
         return ret

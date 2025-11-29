@@ -1,8 +1,7 @@
 import mujoco
+import mujoco.viewer
 import pickle
 import numpy as np
-import mujoco
-import mujoco.viewer
 import time
 import argparse
 from playground.common.onnx_infer import OnnxInfer
@@ -16,18 +15,21 @@ USE_MOTOR_SPEED_LIMITS = True
 
 class MjInfer(MJInferBase):
     def __init__(
-        self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool
+        self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool,
     ):
         super().__init__(model_path)
 
         self.standing = standing
         self.head_control_mode = self.standing
+        
+        # Command magnitude threshold for idle detection
+        self.idle_threshold = 0.01
 
         # Params
         self.linearVelocityScale = 1.0
         self.angularVelocityScale = 1.0
         self.dof_pos_scale = 1.0
-        self.dof_vel_scale = 0.15
+        self.dof_vel_scale = 0.05
         self.action_scale = 0.25
 
         self.action_filter = LowPassActionFilter(50, cutoff_frequency=37.5)
@@ -35,6 +37,7 @@ class MjInfer(MJInferBase):
         if not self.standing:
             self.PRM = PolyReferenceMotion(reference_data)
 
+        # Load policy
         self.policy = OnnxInfer(onnx_model_path, awd=True)
 
         self.COMMANDS_RANGE_X = [-0.15, 0.15]
@@ -52,12 +55,17 @@ class MjInfer(MJInferBase):
         self.commands = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
         self.imitation_i = 0
-        self.imitation_phase = np.array([0, 0])
+        # For standing mode, use fixed phase [1, 0] (cos(0), sin(0))
+        # For joystick mode, this gets updated in the loop
+        self.imitation_phase = np.array([1.0, 0.0]) if standing else np.array([0.0, 0.0])
         self.saved_obs = []
 
         self.max_motor_velocity = 5.24  # rad/s
 
         self.phase_frequency_factor = 1.0
+
+        # Initialize motor_targets to prevent use before assignment
+        self.motor_targets = self.default_actuator.copy()
 
         print(f"joint names: {self.joint_names}")
         print(f"actuator names: {self.actuator_names}")
@@ -71,7 +79,7 @@ class MjInfer(MJInferBase):
     ):
         gyro = self.get_gyro(data)
         accelerometer = self.get_accelerometer(data)
-        accelerometer[0] += 1.3
+        # accelerometer[0] += 1.3  # Removed: causes training/inference mismatch
 
         joint_angles = self.get_actuator_joints_qpos(data.qpos)
         joint_vel = self.get_actuator_joints_qvel(data.qvel)
@@ -172,13 +180,16 @@ class MjInfer(MJInferBase):
                     counter += 1
 
                     if counter % self.decimation == 0:
-                        if not self.standing:
+                        # Check if idle FIRST (before updating phase)
+                        cmd_magnitude = np.linalg.norm(self.commands[:3])
+                        is_idle = cmd_magnitude < self.idle_threshold
+                        
+                        # Only update imitation phase when moving (not when idle)
+                        if not self.standing and not is_idle:
                             self.imitation_i += 1.0 * self.phase_frequency_factor
                             self.imitation_i = (
                                 self.imitation_i % self.PRM.nb_steps_in_period
                             )
-                            # print(self.PRM.nb_steps_in_period)
-                            # exit()
                             self.imitation_phase = np.array(
                                 [
                                     np.cos(
@@ -195,15 +206,20 @@ class MjInfer(MJInferBase):
                                     ),
                                 ]
                             )
-                        obs = self.get_obs(
-                            self.data,
-                            self.commands,
-                        )
-                        self.saved_obs.append(obs)
-                        action = self.policy.infer(obs)
+                        
+                        if is_idle:
+                            # When idle, output zero action to hold home position
+                            # This is more stable than using a separate standing policy
+                            action = np.zeros(self.num_dofs)
+                        else:
+                            # Use main policy when moving
+                            obs = self.get_obs(self.data, self.commands)
+                            self.saved_obs.append(obs)
+                            action = self.policy.infer(obs)
 
-                        # self.action_filter.push(action)
-                        # action = self.action_filter.get_filtered_action()
+                        # Apply low-pass filter for smoother movements
+                        self.action_filter.push(action)
+                        action = self.action_filter.get_filtered_action()
 
                         self.last_last_last_action = self.last_last_action.copy()
                         self.last_last_action = self.last_action.copy()
@@ -226,8 +242,11 @@ class MjInfer(MJInferBase):
 
                             self.prev_motor_targets = self.motor_targets.copy()
 
-                        # head_targets = self.commands[3:]
-                        # self.motor_targets[5:9] = head_targets
+                        # Apply head commands (add to policy output, matching real robot behavior)
+                        if self.head_control_mode:
+                            head_targets = self.commands[3:] + self.motor_targets[5:9]
+                            self.motor_targets[5:9] = head_targets
+                        
                         self.data.ctrl = self.motor_targets.copy()
 
                     viewer.sync()
@@ -244,8 +263,8 @@ class MjInfer(MJInferBase):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-o", "--onnx_model_path", type=str, required=True)
-    # parser.add_argument("-k", action="store_true", default=False)
+    parser.add_argument("-o", "--onnx_model_path", type=str, required=True,
+                        help="Path to policy ONNX file")
     parser.add_argument(
         "--reference_data",
         type=str,
@@ -256,11 +275,12 @@ if __name__ == "__main__":
         type=str,
         default="playground/open_duck_mini_v2/xmls/scene_flat_terrain.xml",
     )
-    parser.add_argument("--standing", action="store_true", default=False)
+    parser.add_argument("--standing", action="store_true", default=False,
+                        help="Running in standing mode (enables head control)")
 
     args = parser.parse_args()
 
     mjinfer = MjInfer(
-        args.model_path, args.reference_data, args.onnx_model_path, args.standing
+        args.model_path, args.reference_data, args.onnx_model_path, args.standing,
     )
     mjinfer.run()
