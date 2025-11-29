@@ -85,7 +85,7 @@ def default_config() -> config_dict.ConfigDict:
                 stand_still=-0.5,  # increased for better idle pose
                 alive=20.0,
                 imitation=1.0,
-                orientation=-3.0,  # strongly penalize body tilt
+                orientation=-5.0,  # very strongly penalize body tilt
                 ang_vel_xy=-0.3,   # penalize tilting motion
             ),
             tracking_sigma=0.01,  # was working at 0.01
