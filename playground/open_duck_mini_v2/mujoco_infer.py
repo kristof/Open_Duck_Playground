@@ -16,16 +16,14 @@ USE_MOTOR_SPEED_LIMITS = True
 class MjInfer(MJInferBase):
     def __init__(
         self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool,
-        standing_onnx_path: str = None,  # Optional standing policy for dual-policy mode
     ):
         super().__init__(model_path)
 
         self.standing = standing
         self.head_control_mode = self.standing
         
-        # Dual-policy mode: use standing policy when idle
-        self.dual_policy_mode = standing_onnx_path is not None
-        self.idle_threshold = 0.01  # Command magnitude threshold for switching
+        # Command magnitude threshold for idle detection
+        self.idle_threshold = 0.01
 
         # Params
         self.linearVelocityScale = 1.0
@@ -39,13 +37,8 @@ class MjInfer(MJInferBase):
         if not self.standing:
             self.PRM = PolyReferenceMotion(reference_data)
 
-        # Load main policy (joystick or standing)
+        # Load policy
         self.policy = OnnxInfer(onnx_model_path, awd=True)
-        
-        # Load standing policy for dual-policy mode
-        if self.dual_policy_mode:
-            print("Dual-policy mode enabled: using standing policy when idle")
-            self.standing_policy = OnnxInfer(standing_onnx_path, awd=True)
 
         self.COMMANDS_RANGE_X = [-0.15, 0.15]
         self.COMMANDS_RANGE_Y = [-0.2, 0.2]
@@ -62,7 +55,9 @@ class MjInfer(MJInferBase):
         self.commands = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
         self.imitation_i = 0
-        self.imitation_phase = np.array([0, 0])
+        # For standing mode, use fixed phase [1, 0] (cos(0), sin(0))
+        # For joystick mode, this gets updated in the loop
+        self.imitation_phase = np.array([1.0, 0.0]) if standing else np.array([0.0, 0.0])
         self.saved_obs = []
 
         self.max_motor_velocity = 5.24  # rad/s
@@ -185,13 +180,16 @@ class MjInfer(MJInferBase):
                     counter += 1
 
                     if counter % self.decimation == 0:
-                        if not self.standing:
+                        # Check if idle FIRST (before updating phase)
+                        cmd_magnitude = np.linalg.norm(self.commands[:3])
+                        is_idle = cmd_magnitude < self.idle_threshold
+                        
+                        # Only update imitation phase when moving (not when idle)
+                        if not self.standing and not is_idle:
                             self.imitation_i += 1.0 * self.phase_frequency_factor
                             self.imitation_i = (
                                 self.imitation_i % self.PRM.nb_steps_in_period
                             )
-                            # print(self.PRM.nb_steps_in_period)
-                            # exit()
                             self.imitation_phase = np.array(
                                 [
                                     np.cos(
@@ -208,20 +206,15 @@ class MjInfer(MJInferBase):
                                     ),
                                 ]
                             )
-                        obs = self.get_obs(
-                            self.data,
-                            self.commands,
-                        )
-                        self.saved_obs.append(obs)
                         
-                        # Dual-policy mode: switch based on command magnitude
-                        if self.dual_policy_mode:
-                            cmd_magnitude = np.linalg.norm(self.commands[:3])
-                            if cmd_magnitude < self.idle_threshold:
-                                action = self.standing_policy.infer(obs)
-                            else:
-                                action = self.policy.infer(obs)
+                        if is_idle:
+                            # When idle, output zero action to hold home position
+                            # This is more stable than using a separate standing policy
+                            action = np.zeros(self.num_dofs)
                         else:
+                            # Use main policy when moving
+                            obs = self.get_obs(self.data, self.commands)
+                            self.saved_obs.append(obs)
                             action = self.policy.infer(obs)
 
                         # Apply low-pass filter for smoother movements
@@ -271,9 +264,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-o", "--onnx_model_path", type=str, required=True,
-                        help="Path to main policy (joystick)")
-    parser.add_argument("-s", "--standing_onnx_path", type=str, default=None,
-                        help="Path to standing policy for dual-policy mode (optional)")
+                        help="Path to policy ONNX file")
     parser.add_argument(
         "--reference_data",
         type=str,
@@ -285,12 +276,11 @@ if __name__ == "__main__":
         default="playground/open_duck_mini_v2/xmls/scene_flat_terrain.xml",
     )
     parser.add_argument("--standing", action="store_true", default=False,
-                        help="Use main policy as standing-only (no dual-policy)")
+                        help="Running in standing mode (enables head control)")
 
     args = parser.parse_args()
 
     mjinfer = MjInfer(
         args.model_path, args.reference_data, args.onnx_model_path, args.standing,
-        standing_onnx_path=args.standing_onnx_path,
     )
     mjinfer.run()
