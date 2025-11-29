@@ -15,12 +15,17 @@ USE_MOTOR_SPEED_LIMITS = True
 
 class MjInfer(MJInferBase):
     def __init__(
-        self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool
+        self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool,
+        standing_onnx_path: str = None,  # Optional standing policy for dual-policy mode
     ):
         super().__init__(model_path)
 
         self.standing = standing
         self.head_control_mode = self.standing
+        
+        # Dual-policy mode: use standing policy when idle
+        self.dual_policy_mode = standing_onnx_path is not None
+        self.idle_threshold = 0.01  # Command magnitude threshold for switching
 
         # Params
         self.linearVelocityScale = 1.0
@@ -34,7 +39,13 @@ class MjInfer(MJInferBase):
         if not self.standing:
             self.PRM = PolyReferenceMotion(reference_data)
 
+        # Load main policy (joystick or standing)
         self.policy = OnnxInfer(onnx_model_path, awd=True)
+        
+        # Load standing policy for dual-policy mode
+        if self.dual_policy_mode:
+            print("Dual-policy mode enabled: using standing policy when idle")
+            self.standing_policy = OnnxInfer(standing_onnx_path, awd=True)
 
         self.COMMANDS_RANGE_X = [-0.15, 0.15]
         self.COMMANDS_RANGE_Y = [-0.2, 0.2]
@@ -202,7 +213,16 @@ class MjInfer(MJInferBase):
                             self.commands,
                         )
                         self.saved_obs.append(obs)
-                        action = self.policy.infer(obs)
+                        
+                        # Dual-policy mode: switch based on command magnitude
+                        if self.dual_policy_mode:
+                            cmd_magnitude = np.linalg.norm(self.commands[:3])
+                            if cmd_magnitude < self.idle_threshold:
+                                action = self.standing_policy.infer(obs)
+                            else:
+                                action = self.policy.infer(obs)
+                        else:
+                            action = self.policy.infer(obs)
 
                         # Apply low-pass filter for smoother movements
                         self.action_filter.push(action)
@@ -250,8 +270,10 @@ class MjInfer(MJInferBase):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-o", "--onnx_model_path", type=str, required=True)
-    # parser.add_argument("-k", action="store_true", default=False)
+    parser.add_argument("-o", "--onnx_model_path", type=str, required=True,
+                        help="Path to main policy (joystick)")
+    parser.add_argument("-s", "--standing_onnx_path", type=str, default=None,
+                        help="Path to standing policy for dual-policy mode (optional)")
     parser.add_argument(
         "--reference_data",
         type=str,
@@ -262,11 +284,13 @@ if __name__ == "__main__":
         type=str,
         default="playground/open_duck_mini_v2/xmls/scene_flat_terrain.xml",
     )
-    parser.add_argument("--standing", action="store_true", default=False)
+    parser.add_argument("--standing", action="store_true", default=False,
+                        help="Use main policy as standing-only (no dual-policy)")
 
     args = parser.parse_args()
 
     mjinfer = MjInfer(
-        args.model_path, args.reference_data, args.onnx_model_path, args.standing
+        args.model_path, args.reference_data, args.onnx_model_path, args.standing,
+        standing_onnx_path=args.standing_onnx_path,
     )
     mjinfer.run()

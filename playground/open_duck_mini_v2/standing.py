@@ -525,6 +525,9 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         #     * self._config.noise_config.scales.linvel
         # )
 
+        # Compute imitation phase (same as joystick, but always 0 for standing)
+        imitation_phase = jp.array([1.0, 0.0])  # cos(0), sin(0) - standing still
+        
         state = jp.hstack(
             [
                 # noisy_linvel,  # 3
@@ -532,14 +535,15 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 # noisy_gravity,  # 3
                 noisy_gyro,  # 3
                 noisy_accelerometer,  # 3
-                info["command"],  # 3
+                info["command"],  # 7
                 noisy_joint_angles - self._default_actuator,  # 10
                 noisy_joint_vel * self._config.dof_vel_scale,  # 10
                 info["last_act"],  # 10
                 info["last_last_act"],  # 10
                 info["last_last_last_act"],  # 10
+                info["motor_targets"],  # 10 - match joystick format
                 contact,  # 2
-                info["current_reference_motion"],
+                imitation_phase,  # 2 - match joystick format
             ]
         )
 
@@ -563,7 +567,8 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 contact,  # 2
                 feet_vel,  # 4*3
                 info["feet_air_time"],  # 2
-                info["current_reference_motion"],
+                info["imitation_i"],  # match joystick format
+                imitation_phase,  # match joystick format
             ]
         )
 
